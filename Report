@@ -1,0 +1,94 @@
+Project 2 Report
+Jiahong Zhu (zhu206)
+
+The purpose of this project is to locate the uninitialized variables.
+
+The way of relizing the purpose is to traverse the AST and analyse all statements in it and decide whether the variable is unintialized.
+
+1. Data Structure
+
+This part introduces the data structure I use in the design.
+
+(1)
+struct var_info{
+  char name[30];
+  bool init;
+  int usebfinit;
+};
+
+The structure var_info records the information for every variable. It includes the name of the variable. The boolean init indicates whether the variable is initialized. The integer usebfinit indicates whether the variable is used before being initialized. If it equals 0, then the variable is used after being initialized. If it is greater than 0, then it corresponds to the sequence of it being used in the function.
+
+(2)
+struct call_node{
+  int dfsstatus;
+  int funID;
+  int child;
+  struct call_node *list[10];
+  struct call_node *parent;
+};
+
+This structure is for nodes in call graph. Each node keeps the status useful for the DFS traverse. It also records the corresponding function ID. The structure also records some graph related information: number of children each node has, pointers to the children nodes, and pointer back to the parent node.
+
+Note that every CALL_EXPR creates a new edge or node in the call graph.
+
+(3)
+struct fun_info{
+  char name[30];				// name of the function
+  int num_arg;					// number of arguments
+  struct var_info *arg;			// information of arguments
+  int num_var;					// number of local variable
+  int uninit_num;				// number of uninitialized variable
+  struct var_info *var;			// information of variables
+  tree root;					// root of the function
+  struct GotoLabelList labelList;	// future label list
+  struct TotalLabels exist_list;	// TotalLabels label list
+  bool *init_var;				// if the variables are initialized in this function
+  bool cur_var[30];
+  bool done;					// if we have already analyzed the function
+};
+
+This structure is for each function.
+
+(4)
+struct TotalLabels{
+  int curnum;					// # of TotalLabels label
+  int LabelList[20];			// label list
+};
+
+While analyzing the statement lists, upon seeing a LABEL_EXPR, add it to the LabelList.
+
+(5)
+struct GotoLabel{
+  int label;
+  tree tnode;
+  bool var_info[20];
+};
+
+struct GotoLabelList{
+  int curnum;
+  struct GotoLabel labels[10];
+};
+
+Upon seeing GOTO_EXPR, check if the corresponding label is already stored in the TotalLabels. If not, it means that it goes to a label that is not encountered yet. We record the information of such Goto expression in the GotoLabel structure and record all the labels in GotoLabelList.
+
+2. Code Design
+
+The work flow of the code is the following. First, we locate the gloabal variables. Second, we get the number of functions and initialize the functions. Third, we build the call graph and initialize it. Fourth, we traverse the call graph using DFS from the main function. For each function, we get the arguments and variables in it and initialize all the data structures. Then we go into the function body through BIND_EXPR, and recursively call the function stmt from the beginning of the body. Fifth and finally, we print out all the uninitialized variables using call_graph.
+  
+Next, we discuss in detail how we handle different statements.
+
+(1) CALL_EXPR: the only C Standard Library functions used in input files are scanf and printf. All the other functions are defined in the input files. We handle the three types of functions differently. The scanf function initializes all its arguments. The prinf function uses all its arguments. All the other functions are anylized using the work flow introduced earlier.
+	
+(2) MODIFY_EXPR: the first of its operand is initialized and the second one is used.
+	
+(3) LABEL_EXPR: the label value is added to the TotalLabels list if it is not already in it. We then check if the label is already in the GotoLabel list, if it is, then we use the information in the GotoLabel list to determine the initialization of the variables at this point.
+	
+(4) GOTO_EXPR: retrieve the label. Check if the label is in the TotalLabels list, if it is, then we can ignore it since it indicates a loop structure. The loop structure won't affect our analysis in variable initialization. If the label is not in the TotalLabels list, then we record the initialization info of variables.
+	
+(5) SWITCH_EXPR: keep current initialization information, go through its body. If the default case has no break: if there is already a GOTO_EXPR in switch's STATEMENT_LIST, we record the var info into the same future list. If there is no GOTO_EXPR in it, we use current initialzation info directly.
+	
+(6) VAR_DECL/PARM_DECL: if a variable is being used, then we check if it is initialized. If a variable is being modified, then change its dfsstatus in the initialization information.
+
+(7) COND_EXPR: keep current initialization information. Analyze two branches and merge the results.
+
+(8) CASE_LABEL_EXPR: reset the initialization info from the start before every case statement.
